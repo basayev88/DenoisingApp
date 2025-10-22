@@ -1,3 +1,4 @@
 streamlit
 pydicom
 tensorflow
+matplotlib
