@@ -1,2 +1,7 @@
 streamlit
 pydicom
+tensorflow
+tensorflow.keras.models
+matplotlib.pyplot
+pathlib
+glob
