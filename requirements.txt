@@ -1,5 +1,3 @@
 streamlit
 pydicom
 tensorflow
-pathlib
-glob
