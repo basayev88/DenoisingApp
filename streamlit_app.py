@@ -33,7 +33,7 @@ uploaded_imas = st.sidebar.file_uploader(
     "Upload noisy IMA/DICOM files (multi-select supported)",
     type=["ima", "dcm"],
     accept_multiple_files=True,
-    help="Pilih banyak berkas sekaligus (Ctrl/Shift klik) untuk mengunggah batch.",
+    help="Pilih banyak berkas sekaligus (Ctrl/Shift klik) untuk batch upload.",
 )
 
 zip_folder = st.sidebar.file_uploader(
@@ -50,29 +50,9 @@ uploaded_model = st.sidebar.file_uploader(
     help="Unggah file model Keras/TensorFlow berformat .h5.",
 )
 
-# Opsi tujuan output
-st.sidebar.subheader("📤 Tujuan Output")
-output_mode = st.sidebar.radio(
-    "Pilih mode output:",
-    options=["Server folder", "Download ZIP"],
-    horizontal=False,
-    help="Aplikasi web tidak dapat menyimpan langsung ke folder lokal pengguna; gunakan Download ZIP untuk memilih lokasi simpan di perangkat Anda.",
-)
-
-output_folder = ""
-if output_mode == "Server folder":
-    output_folder = st.sidebar.text_input(
-        "Nama/Path folder output (server-side):",
-        placeholder="Example: UNet Denoised Results",
-    )
-
 # =========================
 # Helpers
 # =========================
-def ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
-    return path
-
 def list_ima_dcm_recursive(root_dir: str):
     paths = []
     for r, _, files in os.walk(root_dir):
@@ -106,19 +86,8 @@ def read_dicom_from_bytes(b: bytes):
     except Exception as e:
         return str(e), None, False
 
-def save_dicom_to_disk(original_dcm, denoised_array: np.ndarray, save_path: str):
-    try:
-        denoised_scaled = (denoised_array * 255.0).astype(np.uint16)
-        dcm_out = original_dcm.copy()
-        dcm_out.PixelData = denoised_scaled.tobytes()
-        ensure_dir(os.path.dirname(save_path))
-        dcm_out.save_as(save_path)
-        return True, "Saved"
-    except Exception as e:
-        return False, str(e)
-
 def dicom_bytes(original_dcm, denoised_array: np.ndarray) -> bytes:
-    """Return DICOM bytes for inclusion in ZIP."""
+    """Return DICOM bytes for inclusion in ZIP (file-like write)."""
     denoised_scaled = (denoised_array * 255.0).astype(np.uint16)
     dcm_out = original_dcm.copy()
     dcm_out.PixelData = denoised_scaled.tobytes()
@@ -138,13 +107,10 @@ with col1:
 
     files_ready = (uploaded_imas and len(uploaded_imas) > 0) or (zip_folder is not None)
     model_ready = uploaded_model is not None
-    out_ready = (output_mode == "Download ZIP") or (
-        output_mode == "Server folder" and bool(output_folder)
-    )
 
-    start_disabled = not (files_ready and model_ready and out_ready)
+    start_disabled = not (files_ready and model_ready)
 
-    if st.button("🚀 Start Denoising Process", type="primary", disabled=start_disabled):
+    if st.button("🚀 Start Denoising and Prepare ZIP", type="primary", disabled=start_disabled):
         with validation_status:
             # Tentukan sumber input
             input_mode = None
@@ -157,11 +123,6 @@ with col1:
                 input_mode = "zip"
             else:
                 st.error("❌ No noisy images provided!")
-                st.stop()
-
-            # Validasi model
-            if uploaded_model is None:
-                st.error("❌ Model file not uploaded!")
                 st.stop()
 
             # Simpan model sementara
@@ -193,15 +154,9 @@ with col1:
                     st.error(f"❌ Failed to extract ZIP: {e}")
                     st.stop()
 
-            # Siapkan output
-            if output_mode == "Server folder":
-                ensure_dir(output_folder)
-
-            # Siapkan ZIP buffer bila mode unduh
-            zip_buffer, zf = None, None
-            if output_mode == "Download ZIP":
-                zip_buffer = io.BytesIO()
-                zf = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED)
+            # Siapkan ZIP buffer
+            zip_buffer = io.BytesIO()
+            zf = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED)
 
             # Progress
             total = len(input_file_items) if input_mode == "uploaded_files" else len(path_list)
@@ -211,123 +166,5 @@ with col1:
             success_count, failed_count = 0, 0
             failed_files = []
 
-            # Definisi fungsi tanpa nonlocal: kembalikan tuple hasil
             def process_one(img_norm, dcm_obj, fname):
-                """
-                Proses satu berkas dan kembalikan (success_inc, failed_inc, failed_record_or_None).
-                """
                 try:
-                    img_input = np.expand_dims(img_norm, axis=(0, -1))
-                    denoised = model.predict(img_input, verbose=0)[0, :, :, 0]
-                    if output_mode == "Server folder":
-                        out_path = os.path.join(output_folder, fname)
-                        ok_save, msg = save_dicom_to_disk(dcm_obj, denoised, out_path)
-                        if ok_save:
-                            st.success(f"✅ {fname} saved to server")
-                            return 1, 0, None
-                        else:
-                            st.error(f"❌ Failed to save {fname}: {msg}")
-                            return 0, 1, (fname, msg)
-                    else:
-                        dbytes = dicom_bytes(dcm_obj, denoised)
-                        zf.writestr(fname, dbytes)
-                        st.success(f"✅ {fname} added to ZIP")
-                        return 1, 0, None
-                except Exception as e:
-                    st.error(f"❌ Error processing {fname}: {e}")
-                    return 0, 1, (fname, str(e))
-
-            # Proses menurut sumber input
-            if input_mode == "uploaded_files":
-                for idx, f in enumerate(input_file_items):
-                    fname = f.name
-                    status_text.text(f"Denoising: {fname} ({idx + 1}/{total})")
-                    img_norm, dcm, okread = read_dicom_from_bytes(f.getbuffer())
-                    if not okread:
-                        failed_count += 1
-                        failed_files.append((fname, img_norm))
-                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
-                        progress_bar.progress((idx + 1) / total)
-                        continue
-                    s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
-                    success_count += s_inc
-                    failed_count += f_inc
-                    if fail_rec:
-                        failed_files.append(fail_rec)
-                    progress_bar.progress((idx + 1) / total)
-            else:
-                for idx, p in enumerate(path_list):
-                    fname = os.path.basename(p)
-                    status_text.text(f"Denoising: {fname} ({idx + 1}/{total})")
-                    img_norm, dcm, okread = read_dicom_from_path(p)
-                    if not okread:
-                        failed_count += 1
-                        failed_files.append((fname, img_norm))
-                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
-                        progress_bar.progress((idx + 1) / total)
-                        continue
-                    s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
-                    success_count += s_inc
-                    failed_count += f_inc
-                    if fail_rec:
-                        failed_files.append(fail_rec)
-                    progress_bar.progress((idx + 1) / total)
-
-            # Tutup ZIP jika dibuat
-            if output_mode == "Download ZIP" and zip_buffer is not None:
-                zf.close()
-                zip_buffer.seek(0)
-
-            # Summary
-            st.markdown("---")
-            st.header("📊 Resume")
-            col_success, col_failed = st.columns(2)
-            with col_success:
-                st.metric("✅ Successfully", success_count)
-            with col_failed:
-                st.metric("❌ Failed", failed_count)
-
-            if failed_files:
-                st.subheader("⚠️ Failed to denoise:")
-                for fname, err in failed_files:
-                    st.error(f"{fname}: {err}")
-
-            if success_count > 0 and output_mode == "Server folder":
-                st.success(f"🎉 Done! Saved {success_count} files to: {output_folder}")
-            if success_count > 0 and output_mode == "Download ZIP":
-                st.download_button(
-                    "📦 Download denoised.zip",
-                    data=zip_buffer.getvalue(),
-                    file_name="denoised_results.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                )
-
-with col2:
-    st.header("ℹ️ Information")
-    info = st.container()
-    with info:
-        # Info jumlah file input
-        if uploaded_imas and len(uploaded_imas) > 0:
-            st.info(f"📄 Number of uploaded files: {len(uploaded_imas)}")
-            st.subheader("📋 Preview file list:")
-            for f in uploaded_imas[:5]:
-                st.text(f"• {f.name}")
-            if len(uploaded_imas) > 5:
-                st.text(f"... and {len(uploaded_imas) - 5} others")
-        elif zip_folder is not None:
-            st.info("📦 ZIP uploaded (akan diekstrak saat proses)")
-
-        # Info model
-        if uploaded_model is not None:
-            model_size_mb = uploaded_model.size / (1024 * 1024)
-            st.info(f"🤖 Model: {uploaded_model.name}")
-            st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
-
-        # Info output
-        st.info(f"📤 Output mode: {output_mode}")
-        if output_mode == "Server folder" and output_folder:
-            st.info(f"💾 Output Folder (server): {output_folder}")
-
-# Footer
-st.markdown("---")
