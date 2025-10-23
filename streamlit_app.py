@@ -15,7 +15,7 @@ from PIL import Image  # untuk ikon gambar
 # =========================
 st.set_page_config(
     page_title="Low-Dose CT Medical Image Denoising App",
-    page_icon=Image.open("TPU-logo.jpg"),  # gunakan logo terlampir
+    page_icon=Image.open("radioactive.jpg"),  # gunakan logo terlampir
     layout="wide",
 )
 
@@ -261,4 +261,5 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
+
 
