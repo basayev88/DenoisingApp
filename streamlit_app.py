@@ -19,7 +19,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🏥 Low-Dose CT Medical Image Denoising (IMA / DICOM)")
+st.title("Low-Dose CT Medical Image Denoising (IMA / DICOM)")
 st.markdown("---")
 
 # =========================
@@ -261,3 +261,4 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
+
