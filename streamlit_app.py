@@ -11,7 +11,7 @@ import tensorflow as tf
 from PIL import Image  # untuk ikon gambar
 
 APP_DIR = Path(__file__).parent
-LOGO_PATH = APP_DIR / "TPU-logo-2.jpg"
+LOGO_PATH = APP_DIR / "TPU-logo-3.png"
 
 # =========================
 # Konfigurasi halaman
@@ -265,6 +265,7 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
+
 
 
 
