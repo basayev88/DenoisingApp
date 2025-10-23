@@ -1,287 +1,313 @@
-
 import os
-import streamlit as st
+import io
+import zipfile
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import pydicom
+import streamlit as st
 import tensorflow as tf
-from tensorflow.keras.models import load_model
-import matplotlib.pyplot as plt
-from pathlib import Path
-import glob
 
-# Konfigurasi halaman Streamlit
+# =========================
+# Konfigurasi halaman
+# =========================
 st.set_page_config(
     page_title="Low-Dose CT Medical Image Denoising App",
     page_icon="🏥",
-    layout="wide"
+    layout="wide",
 )
 
 st.title("🏥 Low-Dose CT Medical Image Denoising (IMA / DICOM)")
 st.markdown("---")
 
-# Sidebar untuk input parameter
+# =========================
+# Sidebar: Input
+# =========================
 st.sidebar.header("⚙️ Settings")
 
-# Input folder noisy
-st.sidebar.subheader("📁 Input Folder Noisy Images")
-noisy_folder = st.sidebar.text_input(
-    "Input folder path contain noisy images (.IMA):",
-    placeholder="Example: quarter_1mm_sharp_L109"
+# Noisy images uploader
+st.sidebar.subheader("📁 Input Noisy Images")
+uploaded_imas = st.sidebar.file_uploader(
+    "Upload noisy IMA/DICOM files (multi-select supported)",
+    type=["ima", "dcm"],
+    accept_multiple_files=True,
+    help="Pilih banyak berkas sekaligus (Ctrl/Shift klik) untuk mengunggah batch.",
 )
 
-# File browser alternatif menggunakan selectbox jika folder ada di directory yang sama
-if st.sidebar.checkbox("Select from local folder"):
-    current_dir = Path(".")
-    folders = [d.name for d in current_dir.iterdir() if d.is_dir()]
-    if folders:
-        noisy_folder = st.sidebar.selectbox("Select folder:", options=folders)
+zip_folder = st.sidebar.file_uploader(
+    "Atau upload folder sebagai .zip",
+    type=["zip"],
+    help="Unggah folder yang dikompres ZIP untuk memproses seluruh isinya.",
+)
 
-# Input model path
+# Model uploader
 st.sidebar.subheader("🤖 Model File")
-model_path = st.sidebar.text_input(
-    "Input local model file (.h5):",
-    placeholder="Example: UNet denoising 3 layers E20B4_model.h5"
+uploaded_model = st.sidebar.file_uploader(
+    "Upload model (.h5)",
+    type=["h5"],
+    help="Unggah file model Keras/TensorFlow berformat .h5.",
 )
 
-# File browser untuk model
-if st.sidebar.checkbox("Select model from local file"):
-    current_dir = Path(".")
-    model_files = list(current_dir.glob("*.h5"))
-    if model_files:
-        model_path = st.sidebar.selectbox(
-            "Select model file:", 
-            options=[str(f) for f in model_files]
-        )
-
-# Input output folder
+# Output folder (server-side)
 st.sidebar.subheader("💾 Folder Output")
 output_folder = st.sidebar.text_input(
     "Type output folder name:",
-    placeholder="Example: UNet Denoised Results"
+    placeholder="Example: UNet Denoised Results",
 )
 
-# Progress tracking
-if 'progress' not in st.session_state:
+# =========================
+# State & Helpers
+# =========================
+if "progress" not in st.session_state:
     st.session_state.progress = 0
-if 'total_files' not in st.session_state:
+if "total_files" not in st.session_state:
     st.session_state.total_files = 0
 
-# Fungsi helper
+def ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def list_ima_dcm_recursive(root_dir: str):
+    paths = []
+    for r, _, files in os.walk(root_dir):
+        for name in files:
+            if name.lower().endswith((".ima", ".dcm")):
+                paths.append(os.path.join(r, name))
+    paths.sort()
+    return paths
+
 @st.cache_resource
-def load_denoising_model(model_path):
-    """Load model ..."""
+def load_denoising_model(model_path: str):
     try:
         model = tf.keras.models.load_model(model_path, compile=False)
         return model, True
     except Exception as e:
         return str(e), False
 
-def read_dicom(path):
-    """Read DICOM file (.IMA) and return to array numpy 2D"""
+def read_dicom_from_path(path: str):
     try:
         dcm = pydicom.dcmread(path)
         img = dcm.pixel_array.astype(np.float32)
-        # Normalisasi ke [0,1]
         img = img / 255.0
         return img, dcm, True
     except Exception as e:
         return str(e), None, False
 
-def save_dicom(original_dcm, denoised_array, save_path):
-    """Save denoised result as new DICOM file """
+def read_dicom_from_bytes(b: bytes):
     try:
-        denoised_scaled = (denoised_array * 255).astype(np.uint16)
-        dcm = original_dcm.copy()  # Buat copy untuk menghindari modifikasi original
-        dcm.PixelData = denoised_scaled.tobytes()
-        dcm.save_as(save_path)
+        dcm = pydicom.dcmread(io.BytesIO(b))
+        img = dcm.pixel_array.astype(np.float32)
+        img = img / 255.0
+        return img, dcm, True
+    except Exception as e:
+        return str(e), None, False
+
+def save_dicom(original_dcm, denoised_array: np.ndarray, save_path: str):
+    try:
+        denoised_scaled = (denoised_array * 255.0).astype(np.uint16)
+        dcm_out = original_dcm.copy()
+        dcm_out.PixelData = denoised_scaled.tobytes()
+        ensure_dir(os.path.dirname(save_path))
+        dcm_out.save_as(save_path)
         return True, "Successfully saved"
     except Exception as e:
         return False, str(e)
 
-def get_ima_files(folder_path):
-    """Get all .IMA files from folder"""
-    if not os.path.exists(folder_path):
-        return []
-    
-    ima_files = []
-    for filename in os.listdir(folder_path):
-        if filename.lower().endswith('.ima'):
-            ima_files.append(filename)
-    
-    return sorted(ima_files)
-
-# Main content area
+# =========================
+# UI: Processing & Info
+# =========================
 col1, col2 = st.columns([2, 1])
 
 with col1:
     st.header("📋 Processing Status")
-    
-    # Validasi input
     validation_status = st.container()
-    
-    # Tombol untuk memulai proses
-    if st.button("🚀 Start Denoising Process", type="primary", disabled=not all([noisy_folder, model_path, output_folder])):
-        
+
+    files_ready = (uploaded_imas and len(uploaded_imas) > 0) or (zip_folder is not None)
+    model_ready = uploaded_model is not None
+    output_ready = bool(output_folder)
+
+    start_disabled = not (files_ready and model_ready and output_ready)
+
+    if st.button(
+        "🚀 Start Denoising Process",
+        type="primary",
+        disabled=start_disabled,
+    ):
         with validation_status:
-            # Validasi folder noisy
-            if not noisy_folder or not os.path.exists(noisy_folder):
-                st.error("❌ Noisy Folder not found!")
-                st.stop()
-            
-            # Validasi model
-            if not model_path or not os.path.exists(model_path):
-                st.error("❌ Model File not found!")
-                st.stop()
-            
-            # Validasi file .IMA
-            ima_files = get_ima_files(noisy_folder)
-            if not ima_files:
-                st.error("❌ No .IMA file found in input folder!")
-                st.stop()
-            
-            st.success(f"✅ Found {len(ima_files)} .IMA files for processing")
-        
-        # Load model
-        with st.spinner("⏳ Loading model..."):
-            model, model_loaded = load_denoising_model(model_path)
-            
-            if not model_loaded:
-                st.error(f"❌ Failed to load model: {model}")
-                st.stop()
+            # Validasi file input
+            input_mode = None
+            input_file_items = []
+
+            if uploaded_imas and len(uploaded_imas) > 0:
+                input_mode = "uploaded_files"
+                input_file_items = uploaded_imas
+            elif zip_folder is not None:
+                input_mode = "zip"
             else:
-                st.success("✅ Model successfully loaded!")
-        
-        # Buat folder output
-        os.makedirs(output_folder, exist_ok=True)
-        st.info(f"📁 Output folder: {output_folder}")
-        
-        # Progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Counter untuk file yang berhasil dan gagal
-        success_count = 0
-        failed_count = 0
-        failed_files = []
-        
-        # Proses setiap file
-        for idx, filename in enumerate(ima_files):
-            input_path = os.path.join(noisy_folder, filename)
-            output_path = os.path.join(output_folder, filename)
-            
-            # Update status
-            status_text.text(f"Denoising: {filename} ({idx + 1}/{len(ima_files)})")
-            
-            # Baca DICOM
-            img_norm, dcm, read_success = read_dicom(input_path)
-            
-            if not read_success:
-                failed_count += 1
-                failed_files.append((filename, img_norm))
-                st.warning(f"⚠️ Failed to read {filename}: {img_norm}")
-                continue
-            
-            try:
-                # Ubah ke bentuk (1, 512, 512, 1)
-                img_input = np.expand_dims(img_norm, axis=(0, -1))
-                
-                # Prediksi denoising
-                denoised = model.predict(img_input, verbose=0)[0, :, :, 0]
-                
-                # Simpan hasil ke DICOM baru
-                save_success, save_message = save_dicom(dcm, denoised, output_path)
-                
-                if save_success:
-                    success_count += 1
-                    st.success(f"✅ {filename} successfully denoised")
+                st.error("❌ No noisy images provided!")
+                st.stop()
+
+            # Validasi model
+            if uploaded_model is None:
+                st.error("❌ Model file not uploaded!")
+                st.stop()
+
+            # Siapkan model ke file sementara
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_model:
+                tmp_model.write(uploaded_model.getbuffer())
+                model_tmp_path = tmp_model.name
+
+            with st.spinner("⏳ Loading model..."):
+                model, model_loaded = load_denoising_model(model_tmp_path)
+                if not model_loaded:
+                    st.error(f"❌ Failed to load model: {model}")
+                    st.stop()
                 else:
-                    failed_count += 1
-                    failed_files.append((filename, save_message))
-                    st.error(f"❌ Failed to save {filename}: {save_message}")
-                    
-            except Exception as e:
-                failed_count += 1
-                failed_files.append((filename, str(e)))
-                st.error(f"❌ Error to process {filename}: {str(e)}")
-            
-            # Update progress
-            progress = (idx + 1) / len(ima_files)
-            progress_bar.progress(progress)
-        
-        # Summary hasil
-        st.markdown("---")
-        st.header("📊 Resume")
-        
-        col_success, col_failed = st.columns(2)
-        with col_success:
-            st.metric("✅ Successfully", success_count)
-        with col_failed:
-            st.metric("❌ Failed", failed_count)
-        
-        if failed_files:
-            st.subheader("⚠️ Failed to denoised:")
-            for filename, error in failed_files:
-                st.error(f"**{filename}**: {error}")
-        
-        if success_count > 0:
-            st.success(f"🎉 Denoising done! {success_count} files successfully saved to: **{output_folder}**")
+                    st.success("✅ Model successfully loaded!")
+
+            # Siapkan input dari ZIP (jika dipakai)
+            extracted_dir = None
+            path_list = None
+            if input_mode == "zip":
+                try:
+                    extracted_dir = tempfile.mkdtemp(prefix="noisy_zip_")
+                    with zipfile.ZipFile(zip_folder, "r") as z:
+                        z.extractall(extracted_dir)
+                    path_list = list_ima_dcm_recursive(extracted_dir)
+                    if not path_list:
+                        st.error("❌ No .IMA/.DCM file found in the uploaded ZIP!")
+                        st.stop()
+                    st.success(f"✅ Found {len(path_list)} files in ZIP")
+                except Exception as e:
+                    st.error(f"❌ Failed to extract ZIP: {e}")
+                    st.stop()
+
+            # Siapkan output folder
+            ensure_dir(output_folder)
+            st.info(f"📁 Output folder: {output_folder}")
+
+            # Progress
+            if input_mode == "uploaded_files":
+                total = len(input_file_items)
+            else:
+                total = len(path_list)
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            success_count = 0
+            failed_count = 0
+            failed_files = []
+
+            # Proses
+            if input_mode == "uploaded_files":
+                for idx, f in enumerate(input_file_items):
+                    fname = f.name
+                    status_text.text(f"Denoising: {fname} ({idx + 1}/{total})")
+
+                    img_norm, dcm, ok = read_dicom_from_bytes(f.getbuffer())
+                    if not ok:
+                        failed_count += 1
+                        failed_files.append((fname, img_norm))
+                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
+                        progress_bar.progress((idx + 1) / total)
+                        continue
+
+                    try:
+                        img_input = np.expand_dims(img_norm, axis=(0, -1))
+                        denoised = model.predict(img_input, verbose=0)[0, :, :, 0]
+                        out_path = os.path.join(output_folder, fname)
+                        save_ok, save_msg = save_dicom(dcm, denoised, out_path)
+                        if save_ok:
+                            success_count += 1
+                            st.success(f"✅ {fname} successfully denoised")
+                        else:
+                            failed_count += 1
+                            failed_files.append((fname, save_msg))
+                            st.error(f"❌ Failed to save {fname}: {save_msg}")
+                    except Exception as e:
+                        failed_count += 1
+                        failed_files.append((fname, str(e)))
+                        st.error(f"❌ Error processing {fname}: {e}")
+
+                    progress_bar.progress((idx + 1) / total)
+
+            else:  # input_mode == "zip"
+                for idx, p in enumerate(path_list):
+                    fname = os.path.basename(p)
+                    status_text.text(f"Denoising: {fname} ({idx + 1}/{total})")
+
+                    img_norm, dcm, ok = read_dicom_from_path(p)
+                    if not ok:
+                        failed_count += 1
+                        failed_files.append((fname, img_norm))
+                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
+                        progress_bar.progress((idx + 1) / total)
+                        continue
+
+                    try:
+                        img_input = np.expand_dims(img_norm, axis=(0, -1))
+                        denoised = model.predict(img_input, verbose=0)[0, :, :, 0]
+                        out_path = os.path.join(output_folder, fname)
+                        save_ok, save_msg = save_dicom(dcm, denoised, out_path)
+                        if save_ok:
+                            success_count += 1
+                            st.success(f"✅ {fname} successfully denoised")
+                        else:
+                            failed_count += 1
+                            failed_files.append((fname, save_msg))
+                            st.error(f"❌ Failed to save {fname}: {save_msg}")
+                    except Exception as e:
+                        failed_count += 1
+                        failed_files.append((fname, str(e)))
+                        st.error(f"❌ Error processing {fname}: {e}")
+
+                    progress_bar.progress((idx + 1) / total)
+
+            # Summary
+            st.markdown("---")
+            st.header("📊 Resume")
+            col_success, col_failed = st.columns(2)
+            with col_success:
+                st.metric("✅ Successfully", success_count)
+            with col_failed:
+                st.metric("❌ Failed", failed_count)
+
+            if failed_files:
+                st.subheader("⚠️ Failed to denoise:")
+                for fname, err in failed_files:
+                    st.error(f"**{fname}**: {err}")
+
+            if success_count > 0:
+                st.success(
+                    f"🎉 Denoising done! {success_count} files successfully saved to: **{output_folder}**"
+                )
 
 with col2:
     st.header("ℹ️ Information")
-    
-    # Informasi folder dan model
-    info_container = st.container()
-    
-    with info_container:
-        if noisy_folder:
-            ima_files = get_ima_files(noisy_folder)
-            if ima_files:
-                st.info(f"📁 **Input Folder:** {noisy_folder}")
-                st.info(f"📄 **Number of .IMA files:** {len(ima_files)}")
-                
-                # Tampilkan beberapa nama file pertama
-                st.subheader("📋 List of File:")
-                for i, file in enumerate(ima_files[:5]):  # Tampilkan 5 file pertama
-                    st.text(f"• {file}")
-                if len(ima_files) > 5:
-                    st.text(f"... and {len(ima_files) - 5} others")
-        
-        if model_path and os.path.exists(model_path):
-            st.info(f"🤖 **Model:** {model_path}")
-            file_size = os.path.getsize(model_path) / (1024 * 1024)  # MB
-            st.info(f"📊 **Model Size:** {file_size:.2f} MB")
-        
+    info = st.container()
+    with info:
+        # Info jumlah file input
+        if uploaded_imas and len(uploaded_imas) > 0:
+            st.info(f"📄 **Number of uploaded files:** {len(uploaded_imas)}")
+            st.subheader("📋 Preview file list:")
+            for f in uploaded_imas[:5]:
+                st.text(f"• {f.name}")
+            if len(uploaded_imas) > 5:
+                st.text(f"... and {len(uploaded_imas) - 5} others")
+        elif zip_folder is not None:
+            st.info("📦 **ZIP uploaded** (akan diekstrak saat proses)")
+
+        # Info model
+        if uploaded_model is not None:
+            model_size_mb = uploaded_model.size / (1024 * 1024)
+            st.info(f"🤖 **Model:** {uploaded_model.name}")
+            st.info(f"📊 **Model Size:** {model_size_mb:.2f} MB")
+
+        # Info output
         if output_folder:
             st.info(f"💾 **Output Folder:** {output_folder}")
 
 # Footer
 st.markdown("---")
-st.markdown("""
-<div style='text-align: center'>
-    <small>
-        🏥 <strong>Low-Dose CT Medical Image Denoising App</strong><br>
-        Deep Learning based to denoise Low-Dose CT Medical Images in DICOM (.IMA) format
-    </small>
-</div>
-""", unsafe_allow_html=True)
-
-# Instruksi penggunaan
-with st.expander("📖 Instruction for Use"):
-    st.markdown("""
-    ### Steps:
-    1. **Select input folder** contains Low-Dose CT noisy images in .IMA format
-    2. **Select model** (.h5) have been trained for denoising
-    3. **Type output folder** to saving the results
-    4. **Press "Start Denoising Process" button**
-    
-    ### Importan Notes:
-    - Make sure the input folder contains the .IMA file.
-    - Model files must be in .h5 format (Keras/TensorFlow)
-    - The results will be saved with the same name and format as the input.
-    - The normalization and denormalization processes are performed automatically.
-    
-    ### Supported Formats:
-    - **Input**: File DICOM (.IMA) 
-    - **Model**: Keras model (.h5)
-    - **Output**: File DICOM (.IMA) denoised
-    """)
