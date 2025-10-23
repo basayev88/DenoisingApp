@@ -198,7 +198,7 @@ with col1:
                 ensure_dir(output_folder)
 
             # Siapkan ZIP buffer bila mode unduh
-            zip_buffer = None
+            zip_buffer, zf = None, None
             if output_mode == "Download ZIP":
                 zip_buffer = io.BytesIO()
                 zf = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED)
@@ -211,9 +211,11 @@ with col1:
             success_count, failed_count = 0, 0
             failed_files = []
 
-            # Proses
+            # Definisi fungsi tanpa nonlocal: kembalikan tuple hasil
             def process_one(img_norm, dcm_obj, fname):
-                nonlocal success_count, failed_count, failed_files
+                """
+                Proses satu berkas dan kembalikan (success_inc, failed_inc, failed_record_or_None).
+                """
                 try:
                     img_input = np.expand_dims(img_norm, axis=(0, -1))
                     denoised = model.predict(img_input, verbose=0)[0, :, :, 0]
@@ -221,22 +223,21 @@ with col1:
                         out_path = os.path.join(output_folder, fname)
                         ok_save, msg = save_dicom_to_disk(dcm_obj, denoised, out_path)
                         if ok_save:
-                            success_count += 1
                             st.success(f"✅ {fname} saved to server")
+                            return 1, 0, None
                         else:
-                            failed_count += 1
-                            failed_files.append((fname, msg))
                             st.error(f"❌ Failed to save {fname}: {msg}")
+                            return 0, 1, (fname, msg)
                     else:
                         dbytes = dicom_bytes(dcm_obj, denoised)
                         zf.writestr(fname, dbytes)
-                        success_count += 1
                         st.success(f"✅ {fname} added to ZIP")
+                        return 1, 0, None
                 except Exception as e:
-                    failed_count += 1
-                    failed_files.append((fname, str(e)))
                     st.error(f"❌ Error processing {fname}: {e}")
+                    return 0, 1, (fname, str(e))
 
+            # Proses menurut sumber input
             if input_mode == "uploaded_files":
                 for idx, f in enumerate(input_file_items):
                     fname = f.name
@@ -248,7 +249,11 @@ with col1:
                         st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
                         progress_bar.progress((idx + 1) / total)
                         continue
-                    process_one(img_norm, dcm, fname)
+                    s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
+                    success_count += s_inc
+                    failed_count += f_inc
+                    if fail_rec:
+                        failed_files.append(fail_rec)
                     progress_bar.progress((idx + 1) / total)
             else:
                 for idx, p in enumerate(path_list):
@@ -261,7 +266,11 @@ with col1:
                         st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
                         progress_bar.progress((idx + 1) / total)
                         continue
-                    process_one(img_norm, dcm, fname)
+                    s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
+                    success_count += s_inc
+                    failed_count += f_inc
+                    if fail_rec:
+                        failed_files.append(fail_rec)
                     progress_bar.progress((idx + 1) / total)
 
             # Tutup ZIP jika dibuat
@@ -288,7 +297,7 @@ with col1:
             if success_count > 0 and output_mode == "Download ZIP":
                 st.download_button(
                     "📦 Download denoised.zip",
-                    data=zip_buffer,
+                    data=zip_buffer.getvalue(),
                     file_name="denoised_results.zip",
                     mime="application/zip",
                     use_container_width=True,
