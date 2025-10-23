@@ -10,6 +10,9 @@ import streamlit as st
 import tensorflow as tf
 from PIL import Image  # untuk ikon gambar
 
+APP_DIR = Path(__file__).parent
+LOGO_PATH = APP_DIR / "TPU-logo-2.jpg"
+
 # =========================
 # Konfigurasi halaman
 # =========================
@@ -19,6 +22,7 @@ st.set_page_config(
     layout="wide",
 )
 
+st.image(str(LOGO_PATH), width=220)
 st.title("Low-Dose CT Medical Image Denoising (IMA / DICOM)")
 st.markdown("---")
 
@@ -261,6 +265,7 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
+
 
 
 
