@@ -168,3 +168,96 @@ with col1:
 
             def process_one(img_norm, dcm_obj, fname):
                 try:
+                    img_input = np.expand_dims(img_norm, axis=(0, -1))
+                    denoised = model.predict(img_input, verbose=0)[0, :, :, 0]
+                    dbytes = dicom_bytes(dcm_obj, denoised)
+                    zf.writestr(fname, dbytes)
+                    st.success(f"✅ {fname} added to ZIP")
+                    return 1, 0, None
+                except Exception as e:
+                    st.error(f"❌ Error processing {fname}: {e}")
+                    return 0, 1, (fname, str(e))
+
+            # Proses
+            if input_mode == "uploaded_files":
+                for idx, f in enumerate(input_file_items):
+                    fname = f.name
+                    status_text.text(f"Denoising: {fname} ({idx + 1}/{total})")
+                    img_norm, dcm, okread = read_dicom_from_bytes(f.getbuffer())
+                    if not okread:
+                        failed_count += 1
+                        failed_files.append((fname, img_norm))
+                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
+                        progress_bar.progress((idx + 1) / total)
+                        continue
+                    s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
+                    success_count += s_inc
+                    failed_count += f_inc
+                    if fail_rec:
+                        failed_files.append(fail_rec)
+                    progress_bar.progress((idx + 1) / total)
+            else:
+                for idx, p in enumerate(path_list):
+                    fname = os.path.basename(p)
+                    status_text.text(f"Denoising: {fname} ({idx + 1}/{total})")
+                    img_norm, dcm, okread = read_dicom_from_path(p)
+                    if not okread:
+                        failed_count += 1
+                        failed_files.append((fname, img_norm))
+                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
+                        progress_bar.progress((idx + 1) / total)
+                        continue
+                    s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
+                    success_count += s_inc
+                    failed_count += f_inc
+                    if fail_rec:
+                        failed_files.append(fail_rec)
+                    progress_bar.progress((idx + 1) / total)
+
+            # Tutup ZIP
+            zf.close()
+            zip_buffer.seek(0)
+
+            # Summary + tombol download
+            st.markdown("---")
+            st.header("📊 Resume")
+            col_success, col_failed = st.columns(2)
+            with col_success:
+                st.metric("✅ Successfully", success_count)
+            with col_failed:
+                st.metric("❌ Failed", failed_count)
+
+            if failed_files:
+                st.subheader("⚠️ Failed to denoise:")
+                for fname, err in failed_files:
+                    st.error(f"{fname}: {err}")
+
+            if success_count > 0:
+                st.download_button(
+                    "📦 Download denoised_results.zip",
+                    data=zip_buffer.getvalue(),
+                    file_name="denoised_results.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+
+with col2:
+    st.header("ℹ️ Information")
+    info = st.container()
+    with info:
+        if uploaded_imas and len(uploaded_imas) > 0:
+            st.info(f"📄 Number of uploaded files: {len(uploaded_imas)}")
+            st.subheader("📋 Preview file list:")
+            for f in uploaded_imas[:5]:
+                st.text(f"• {f.name}")
+            if len(uploaded_imas) > 5:
+                st.text(f"... and {len(uploaded_imas) - 5} others")
+        elif zip_folder is not None:
+            st.info("📦 ZIP uploaded (akan diekstrak saat proses)")
+
+        if uploaded_model is not None:
+            model_size_mb = uploaded_model.size / (1024 * 1024)
+            st.info(f"🤖 Model: {uploaded_model.name}")
+            st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
+
+st.markdown("---")
