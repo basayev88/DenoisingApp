@@ -3,6 +3,7 @@ import io
 import zipfile
 import tempfile
 from pathlib import Path
+import gc
 
 import numpy as np
 import pydicom
@@ -14,13 +15,11 @@ from PIL import Image  # ikon & logo
 # Path & Logo
 # =========================
 APP_DIR = Path(__file__).parent
-
-# Cari logo di beberapa lokasi umum
 LOGO_CANDIDATES = [
-    APP_DIR / "assets" / "TPU-logo-3.png",
-    APP_DIR / "TPU-logo-3.png",
-    APP_DIR / "assets" / "radioactive.png",
-    APP_DIR / "radioactive.png",
+    APP_DIR / "assets" / "TPU-logo-2.jpg",
+    APP_DIR / "TPU-logo-2.jpg",
+    APP_DIR / "assets" / "TPU-logo.jpg",
+    APP_DIR / "TPU-logo.jpg",
 ]
 LOGO_PATH = next((p for p in LOGO_CANDIDATES if p.exists()), None)
 
@@ -48,7 +47,6 @@ st.markdown("---")
 # =========================
 st.sidebar.header("⚙️ Settings")
 
-# Noisy images uploader
 st.sidebar.subheader("📁 Input Noisy Images")
 uploaded_imas = st.sidebar.file_uploader(
     "Upload noisy IMA/DICOM files (multi-select supported)",
@@ -63,7 +61,6 @@ zip_folder = st.sidebar.file_uploader(
     help="Unggah folder ZIP untuk memproses seluruh isinya.",
 )
 
-# Model uploader
 st.sidebar.subheader("🤖 Model File")
 uploaded_model = st.sidebar.file_uploader(
     "Upload model (.h5)",
@@ -109,8 +106,8 @@ def read_dicom_from_bytes(b: bytes):
 
 def dicom_bytes(original_dcm, denoised_array: np.ndarray) -> bytes:
     """
-    Tulis DICOM ke buffer memori, siap dimasukkan ke ZIP.
-    write_like_original=False membantu memastikan file meta DICOM standar.
+    Tulis DICOM ke buffer memori (file-like), siap dimasukkan ke ZIP.
+    write_like_original=False memastikan meta DICOM standar.
     """
     denoised_scaled = (denoised_array * 255.0).astype(np.uint16)
     dcm_out = original_dcm.copy()
@@ -136,14 +133,12 @@ with col1:
     if st.button("🚀 Start Denoising and Prepare ZIP", type="primary", disabled=start_disabled):
         with validation_status:
             # Tentukan sumber input
-            input_mode = None
-            input_file_items = []
-
             if uploaded_imas and len(uploaded_imas) > 0:
                 input_mode = "uploaded_files"
-                input_file_items = uploaded_imas
+                input_items = uploaded_imas
             elif zip_folder is not None:
                 input_mode = "zip"
+                input_items = None
             else:
                 st.error("❌ No noisy images provided!")
                 st.stop()
@@ -161,8 +156,6 @@ with col1:
                 st.success("✅ Model successfully loaded!")
 
             # Ekstrak ZIP bila perlu
-            extracted_dir = None
-            path_list = None
             if input_mode == "zip":
                 try:
                     extracted_dir = tempfile.mkdtemp(prefix="noisy_zip_")
@@ -176,15 +169,17 @@ with col1:
                 except Exception as e:
                     st.error(f"❌ Failed to extract ZIP: {e}")
                     st.stop()
+            else:
+                path_list = None
 
-            # Siapkan ZIP sementara di DISK
+            # Siapkan ZIP di DISK (hindari konsumsi RAM besar)
             zip_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
             zip_tmp_path = zip_tmp.name
             zip_tmp.close()
             zf = zipfile.ZipFile(zip_tmp_path, "w", zipfile.ZIP_DEFLATED)
 
             # Progress
-            total = len(input_file_items) if input_mode == "uploaded_files" else len(path_list)
+            total = len(input_items) if input_mode == "uploaded_files" else len(path_list)
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -197,22 +192,19 @@ with col1:
                     denoised = model.predict(img_input, verbose=0)[0, :, :, 0]
                     dbytes = dicom_bytes(dcm_obj, denoised)
                     zf.writestr(fname, dbytes)
-                    st.success(f"✅ {fname} added to ZIP")
                     return 1, 0, None
                 except Exception as e:
-                    st.error(f"❌ Error processing {fname}: {e}")
                     return 0, 1, (fname, str(e))
 
             # Proses
             if input_mode == "uploaded_files":
-                for idx, f in enumerate(input_file_items):
+                for idx, f in enumerate(input_items):
                     fname = f.name
                     status_text.text(f"Denoising: {fname} ({idx + 1}/{total})")
                     img_norm, dcm, okread = read_dicom_from_bytes(f.getbuffer())
                     if not okread:
                         failed_count += 1
                         failed_files.append((fname, img_norm))
-                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
                         progress_bar.progress((idx + 1) / total)
                         continue
                     s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
@@ -229,7 +221,6 @@ with col1:
                     if not okread:
                         failed_count += 1
                         failed_files.append((fname, img_norm))
-                        st.warning(f"⚠️ Failed to read {fname}: {img_norm}")
                         progress_bar.progress((idx + 1) / total)
                         continue
                     s_inc, f_inc, fail_rec = process_one(img_norm, dcm, fname)
@@ -239,16 +230,19 @@ with col1:
                         failed_files.append(fail_rec)
                     progress_bar.progress((idx + 1) / total)
 
-            # Tutup ZIP, baca sebagai BYTES, simpan di session_state, lalu hapus file sementara
+            # Tutup ZIP & siapkan link unduh via path (tanpa memuat ke memori)
             zf.close()
-            with open(zip_tmp_path, "rb") as fzip:
-                zip_bytes = fzip.read()
+
+            # Bebaskan memori model & grafik TF untuk menstabilkan proses unduhan
             try:
-                os.remove(zip_tmp_path)
+                del model
+                tf.keras.backend.clear_session()
             except Exception:
                 pass
+            gc.collect()
 
-            st.session_state["denoised_zip_bytes"] = zip_bytes
+            # Simpan path ZIP agar persist saat rerun dan JANGAN hapus dulu
+            st.session_state["denoised_zip_path"] = zip_tmp_path
 
             # Ringkasan
             st.markdown("---")
@@ -258,22 +252,37 @@ with col1:
                 st.metric("✅ Successfully", success_count)
             with c_fail:
                 st.metric("❌ Failed", failed_count)
-
             if failed_files:
                 st.subheader("⚠️ Failed to denoise:")
                 for fname, err in failed_files:
                     st.error(f"{fname}: {err}")
 
-# Tampilkan tombol download jika BYTES siap (stabil pada rerun)
-if "denoised_zip_bytes" in st.session_state and st.session_state["denoised_zip_bytes"]:
+# Tampilkan tombol download: selalu buka ulang file tiap render
+if "denoised_zip_path" in st.session_state and os.path.exists(st.session_state["denoised_zip_path"]):
+    # Hindari with ... yang segera menutup handle; biarkan Streamlit membaca selama request
+    fzip = open(st.session_state["denoised_zip_path"], "rb")
     st.download_button(
         "📦 Download denoised_results.zip",
-        data=st.session_state["denoised_zip_bytes"],
+        data=fzip,  # file-like; Streamlit mengalirkan konten saat klik
         file_name="denoised_results.zip",
         mime="application/zip",
         key="download_denoised_zip",
         use_container_width=True,
     )
+    # Tampilkan tombol bersih manual setelah unduhan selesai
+    def _cleanup():
+        try:
+            fzip.close()
+        except Exception:
+            pass
+        p = st.session_state.get("denoised_zip_path")
+        if p and os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+        st.session_state.pop("denoised_zip_path", None)
+    st.button("🧹 Hapus ZIP sementara", on_click=_cleanup)
 
 with col2:
     st.header("ℹ️ Information")
