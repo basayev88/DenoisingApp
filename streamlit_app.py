@@ -12,21 +12,30 @@ import tensorflow as tf
 from PIL import Image  # ikon & logo
 
 APP_DIR = Path(__file__).parent
-HEADER_IMG = APP_DIR / "assets" / "TPU_yadernikh.jpg"  # sesuaikan lokasi
 
-# WAJIB paling awal: konfigurasi halaman
+# 1) Tentukan path aset
+FAVICON = APP_DIR / "assets" / "TPU_new_logo_en.png"   # ikon tab
+HEADER_IMG = APP_DIR / "assets" / "TPU_yadernikh.jpg"  # gambar di atas judul
+# Opsi fallback jika folder assets belum dipakai
+if not FAVICON.exists():
+    alt = APP_DIR / "TPU_new_logo_en.png"
+    FAVICON = alt if alt.exists() else None
+if not HEADER_IMG.exists():
+    alt = APP_DIR / "TPU_yadernikh.jpg"
+    HEADER_IMG = alt if alt.exists() else None
+
+# 2) WAJIB: set konfigurasi halaman paling awal
 st.set_page_config(
     page_title="Low-Dose CT Medical Image Denoising App",
-    page_icon="🏥",
+    page_icon=Image.open(FAVICON) if FAVICON and FAVICON.exists() else "🏥",
     layout="wide",
-)  # [web:95]
+)  # [web:165][web:95]
 
-# =========================
-# Header: Logo di atas judul
-# =========================
-c1, c2, c3 = st.columns([1, 2, 1])
-with c2:
-    st.image(str(HEADER_IMG), use_container_width=True)
+# 3) Render gambar header di atas judul (jika ada)
+if HEADER_IMG and HEADER_IMG.exists():
+    left, mid, right = st.columns([1, 2, 1])  # pusatkan
+    with mid:
+        st.image(str(HEADER_IMG), use_container_width=True)  # [web:106]
 st.title("Low-Dose CT Medical Image Denoising (IMA/DICOM)")
 st.markdown("---")
 
@@ -292,6 +301,7 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
+
 
 
 
