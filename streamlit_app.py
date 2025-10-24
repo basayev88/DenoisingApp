@@ -8,22 +8,43 @@ import numpy as np
 import pydicom
 import streamlit as st
 import tensorflow as tf
-from PIL import Image  # untuk ikon gambar
-
-APP_DIR = Path(__file__).parent
-LOGO_PATH = APP_DIR / "TPU-logo-3.png"
+from PIL import Image  # untuk ikon & logo
 
 # =========================
-# Konfigurasi halaman
+# Path & Logo
+# =========================
+APP_DIR = Path(__file__).parent
+# Coba cari logo di assets/, fallback ke root proyek
+LOGO_PATHS = [
+    APP_DIR / "assets" / "TPU-logo-2.jpg",
+    APP_DIR / "TPU-logo-2.jpg",
+    APP_DIR / "assets" / "TPU-logo.jpg",
+    APP_DIR / "TPU-logo.jpg",
+]
+for _p in LOGO_PATHS:
+    if _p.exists():
+        LOGO_PATH = _p
+        break
+else:
+    LOGO_PATH = None  # logo opsional
+
+# =========================
+# Konfigurasi halaman (WAJIB paling awal)
 # =========================
 st.set_page_config(
     page_title="Low-Dose CT Medical Image Denoising App",
-    page_icon=Image.open("radioactive.png"),  # gunakan logo terlampir
+    page_icon=Image.open(LOGO_PATH) if LOGO_PATH else "🏥",
     layout="wide",
 )
 
-st.image(str(LOGO_PATH), width=220)
-st.title("Low-Dose CT Medical Image Denoising (IMA / DICOM)")
+# =========================
+# Header: Logo di atas judul
+# =========================
+if LOGO_PATH:
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.image(str(LOGO_PATH), width=240)
+st.title("🏥 Low-Dose CT Medical Image Denoising (IMA / DICOM)")
 st.markdown("---")
 
 # =========================
@@ -43,7 +64,7 @@ uploaded_imas = st.sidebar.file_uploader(
 zip_folder = st.sidebar.file_uploader(
     "Atau upload folder sebagai .zip",
     type=["zip"],
-    help="Unggah folder yang dikompres ZIP untuk memproses seluruh isinya.",
+    help="Unggah folder ZIP untuk memproses seluruh isinya.",
 )
 
 # Model uploader
@@ -91,14 +112,17 @@ def read_dicom_from_bytes(b: bytes):
         return str(e), None, False
 
 def dicom_bytes(original_dcm, denoised_array: np.ndarray) -> bytes:
-    """Return DICOM bytes for inclusion in ZIP (file-like write)."""
+    """
+    Tulis DICOM ke buffer memori, siap dimasukkan ke ZIP.
+    Gunakan write_like_original=False untuk memastikan file meta DICOM yang konforman.
+    """
     denoised_scaled = (denoised_array * 255.0).astype(np.uint16)
     dcm_out = original_dcm.copy()
     dcm_out.PixelData = denoised_scaled.tobytes()
     mem = io.BytesIO()
-    dcm_out.save_as(mem)  # pydicom mendukung file-like object
+    dcm_out.save_as(mem, write_like_original=False)
     mem.seek(0)
-    return mem.read()
+    return mem.getvalue()
 
 # =========================
 # UI: Processing & Info
@@ -218,9 +242,10 @@ with col1:
                         failed_files.append(fail_rec)
                     progress_bar.progress((idx + 1) / total)
 
-            # Tutup ZIP
+            # Tutup ZIP dan siapkan bytes untuk unduhan
             zf.close()
             zip_buffer.seek(0)
+            st.session_state["denoised_zip_bytes"] = zip_buffer.getvalue()
 
             # Summary + tombol download
             st.markdown("---")
@@ -236,14 +261,16 @@ with col1:
                 for fname, err in failed_files:
                     st.error(f"{fname}: {err}")
 
-            if success_count > 0:
-                st.download_button(
-                    "📦 Download denoised_results.zip",
-                    data=zip_buffer.getvalue(),
-                    file_name="denoised_results.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                )
+# Tampilkan tombol download jika ZIP sudah siap
+if "denoised_zip_bytes" in st.session_state and st.session_state["denoised_zip_bytes"]:
+    st.download_button(
+        "📦 Download denoised_results.zip",
+        data=st.session_state["denoised_zip_bytes"],
+        file_name="denoised_results.zip",
+        mime="application/zip",
+        key="download_denoised_zip",
+        use_container_width=True,
+    )
 
 with col2:
     st.header("ℹ️ Information")
@@ -265,8 +292,3 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
-
-
-
-
-
