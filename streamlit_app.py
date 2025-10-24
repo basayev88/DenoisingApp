@@ -11,33 +11,22 @@ import streamlit as st
 import tensorflow as tf
 from PIL import Image  # ikon & logo
 
-# =========================
-# Path & Logo
-# =========================
 APP_DIR = Path(__file__).parent
 HEADER_IMG = APP_DIR / "assets" / "TPU_yadernikh.jpg"  # sesuaikan lokasi
-LOGO_CANDIDATES = [
-    APP_DIR / "assets" / "TPU_new_logo_en.png",
-    APP_DIR / "TPU_new_logo_en.png",
-]
-LOGO_PATH = next((p for p in LOGO_CANDIDATES if p.exists()), None)
 
-# =========================
-# Konfigurasi halaman (WAJIB paling awal)
-# =========================
+# WAJIB paling awal: konfigurasi halaman
 st.set_page_config(
     page_title="Low-Dose CT Medical Image Denoising App",
-    page_icon=Image.open(LOGO_PATH) if LOGO_PATH else "🏥",
+    page_icon="🏥",
     layout="wide",
-)
+)  # [web:95]
 
 # =========================
 # Header: Logo di atas judul
 # =========================
-if LOGO_PATH:
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        st.image(str(HEADER_IMG), use_container_width=True)
+c1, c2, c3 = st.columns([1, 2, 1])
+with c2:
+    st.image(str(HEADER_IMG), use_container_width=True)
 st.title("Low-Dose CT Medical Image Denoising (IMA/DICOM)")
 st.markdown("---")
 
@@ -303,5 +292,6 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
+
 
 
