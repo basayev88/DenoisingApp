@@ -17,10 +17,10 @@ APP_DIR = Path(__file__).parent
 
 # Cari logo di beberapa lokasi umum
 LOGO_CANDIDATES = [
-    APP_DIR / "assets" / "TPU-logo-2.jpg",
-    APP_DIR / "TPU-logo-2.jpg",
-    APP_DIR / "assets" / "TPU-logo.jpg",
-    APP_DIR / "TPU-logo.jpg",
+    APP_DIR / "assets" / "TPU-logo-3.jpg",
+    APP_DIR / "TPU-logo-3.jpg",
+    APP_DIR / "assets" / "radioactive.jpg",
+    APP_DIR / "radioactive.jpg",
 ]
 LOGO_PATH = next((p for p in LOGO_CANDIDATES if p.exists()), None)
 
@@ -300,3 +300,4 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
+
