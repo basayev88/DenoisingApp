@@ -17,10 +17,10 @@ APP_DIR = Path(__file__).parent
 
 # Cari logo di beberapa lokasi umum
 LOGO_CANDIDATES = [
-    APP_DIR / "assets" / "TPU-logo-3.jpg",
-    APP_DIR / "TPU-logo-3.jpg",
-    APP_DIR / "assets" / "radioactive.jpg",
-    APP_DIR / "radioactive.jpg",
+    APP_DIR / "assets" / "TPU-logo-3.png",
+    APP_DIR / "TPU-logo-3.png",
+    APP_DIR / "assets" / "radioactive.png",
+    APP_DIR / "radioactive.png",
 ]
 LOGO_PATH = next((p for p in LOGO_CANDIDATES if p.exists()), None)
 
@@ -177,7 +177,7 @@ with col1:
                     st.error(f"❌ Failed to extract ZIP: {e}")
                     st.stop()
 
-            # Siapkan ZIP di DISK (stabil untuk file besar)
+            # Siapkan ZIP sementara di DISK
             zip_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
             zip_tmp_path = zip_tmp.name
             zip_tmp.close()
@@ -239,9 +239,16 @@ with col1:
                         failed_files.append(fail_rec)
                     progress_bar.progress((idx + 1) / total)
 
-            # Tutup ZIP dan simpan path untuk unduhan (persist saat rerun)
+            # Tutup ZIP, baca sebagai BYTES, simpan di session_state, lalu hapus file sementara
             zf.close()
-            st.session_state["denoised_zip_path"] = zip_tmp_path
+            with open(zip_tmp_path, "rb") as fzip:
+                zip_bytes = fzip.read()
+            try:
+                os.remove(zip_tmp_path)
+            except Exception:
+                pass
+
+            st.session_state["denoised_zip_bytes"] = zip_bytes
 
             # Ringkasan
             st.markdown("---")
@@ -257,28 +264,16 @@ with col1:
                 for fname, err in failed_files:
                     st.error(f"{fname}: {err}")
 
-# Tampilkan tombol download jika ZIP siap (gunakan handle file untuk hemat RAM)
-if "denoised_zip_path" in st.session_state and os.path.exists(st.session_state["denoised_zip_path"]):
-    with open(st.session_state["denoised_zip_path"], "rb") as fzip:
-        st.download_button(
-            "📦 Download denoised_results.zip",
-            data=fzip,                      # file-like object
-            file_name="denoised_results.zip",
-            mime="application/zip",
-            key="download_denoised_zip",
-            use_container_width=True,
-        )
-
-    def _cleanup_zip():
-        path = st.session_state.get("denoised_zip_path")
-        if path and os.path.exists(path):
-            try:
-                os.remove(path)
-            except Exception:
-                pass
-        st.session_state.pop("denoised_zip_path", None)
-
-    st.button("🧹 Hapus ZIP sementara", on_click=_cleanup_zip)
+# Tampilkan tombol download jika BYTES siap (stabil pada rerun)
+if "denoised_zip_bytes" in st.session_state and st.session_state["denoised_zip_bytes"]:
+    st.download_button(
+        "📦 Download denoised_results.zip",
+        data=st.session_state["denoised_zip_bytes"],
+        file_name="denoised_results.zip",
+        mime="application/zip",
+        key="download_denoised_zip",
+        use_container_width=True,
+    )
 
 with col2:
     st.header("ℹ️ Information")
@@ -300,4 +295,3 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
-
