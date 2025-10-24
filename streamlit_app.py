@@ -49,20 +49,20 @@ uploaded_imas = st.sidebar.file_uploader(
     "Upload noisy IMA/DICOM files (multi-select supported)",
     type=["ima", "dcm"],
     accept_multiple_files=True,
-    help="Pilih banyak berkas sekaligus (Ctrl/Shift klik) untuk batch upload.",
+    help="Select multiple files at once (Ctrl/Shift click) for batch upload.",
 )
 
 zip_folder = st.sidebar.file_uploader(
-    "Atau upload folder sebagai .zip",
+    "Or upload the folder as .zip",
     type=["zip"],
-    help="Unggah folder ZIP untuk memproses seluruh isinya.",
+    help="Upload the ZIP folder to process its entire contents.",
 )
 
 st.sidebar.subheader("🤖 Model File")
 uploaded_model = st.sidebar.file_uploader(
     "Upload model (.h5)",
     type=["h5"],
-    help="Unggah file model Keras/TensorFlow berformat .h5.",
+    help="Upload the Keras/TensorFlow model file in .h5 format.",
 )
 
 # =========================
@@ -279,7 +279,7 @@ if "denoised_zip_path" in st.session_state and os.path.exists(st.session_state["
             except Exception:
                 pass
         st.session_state.pop("denoised_zip_path", None)
-    st.button("🧹 Hapus ZIP sementara", on_click=_cleanup)
+    st.button("🧹 Delete temporary ZIP", on_click=_cleanup)
 
 with col2:
     st.header("ℹ️ Information")
@@ -293,7 +293,7 @@ with col2:
             if len(uploaded_imas) > 5:
                 st.text(f"... and {len(uploaded_imas) - 5} others")
         elif zip_folder is not None:
-            st.info("📦 ZIP uploaded (akan diekstrak saat proses)")
+            st.info("📦 ZIP uploaded (will be extracted during the process)")
 
         if uploaded_model is not None:
             model_size_mb = uploaded_model.size / (1024 * 1024)
@@ -301,7 +301,3 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
-
-
-
-
