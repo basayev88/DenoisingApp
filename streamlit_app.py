@@ -302,15 +302,3 @@ with col2:
 
 st.markdown("---")
 st.markdown("To evaluate the quality of denoised images, you can use evaluation metrics in this apps: https://metreval.streamlit.app/")
-
-st.markdown("---")
-# Tag meta unik dari Google Search Console
-meta_tag = '<meta name="google-site-verification" content="pQIi6VyNo_14DvJZES3l_g7seUMsCwRp-U8gHU_mryk" />'
-
-# Sisipkan tag meta ke dalam bagian head HTML
-st.markdown(meta_tag, unsafe_allow_html=True)
-
-# Sisa dari aplikasi Streamlit Anda
-st.title("Verify ownership")
-st.write("https://ldct-denoising.streamlit.app/")
-
