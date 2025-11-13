@@ -15,7 +15,7 @@ APP_DIR = Path(__file__).parent
 
 # 1) Tentukan path aset
 FAVICON = APP_DIR / "assets" / "TPU_new_logo_en.png"   # ikon tab
-HEADER_IMG = APP_DIR / "assets" / "Logo TPU.png"  # gambar di atas judul
+HEADER_IMG = APP_DIR / "assets" / "Logo_TPU.png"  # gambar di atas judul
 # Opsi fallback jika folder assets belum dipakai
 if not FAVICON.exists():
     alt = APP_DIR / "TPU_new_logo_en.png"
@@ -302,4 +302,5 @@ with col2:
 
 st.markdown("---")
 st.markdown("To evaluate the quality of denoised images, you can use evaluation metrics in this apps: https://metreval.streamlit.app/")
+
 
