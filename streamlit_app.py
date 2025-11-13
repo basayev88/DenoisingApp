@@ -21,7 +21,7 @@ if not FAVICON.exists():
     alt = APP_DIR / "TPU_new_logo_en.png"
     FAVICON = alt if alt.exists() else None
 if not HEADER_IMG.exists():
-    alt = APP_DIR / "TPU_yadernikh.jpg"
+    alt = APP_DIR / "Logo_TPU.jpg"
     HEADER_IMG = alt if alt.exists() else None
 
 # 2) WAJIB: set konfigurasi halaman paling awal
@@ -302,6 +302,7 @@ with col2:
 
 st.markdown("---")
 st.markdown("To evaluate the quality of denoised images, you can use evaluation metrics in this apps: https://metreval.streamlit.app/")
+
 
 
 
