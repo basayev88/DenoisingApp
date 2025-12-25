@@ -301,7 +301,8 @@ with col2:
             st.info(f"📊 Model Size: {model_size_mb:.2f} MB")
 
 st.markdown("---")
-st.markdown("To evaluate the quality of denoised images, you can use evaluation metrics in this apps: https://metreval.streamlit.app/")
+st.markdown("Give feedback to: ism22@tpu.ru")
+
 
 
 
