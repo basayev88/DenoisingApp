@@ -288,7 +288,7 @@ if st.button("🚀 Start Denoising and Prepare ZIP", type="primary", disabled=st
         # Preview 5 citra before/after
         if st.session_state.get("preview_pairs"):
             st.markdown("---")
-            st.header("🔍 Preview Noisy vs Denoised (maksimal 5 contoh)")
+            st.header("🔍 Preview Noisy vs Denoised")
             for pair in st.session_state["preview_pairs"]:
                 st.subheader(pair["fname"])
                 c1, c2 = st.columns(2)
