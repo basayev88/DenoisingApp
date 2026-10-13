@@ -2,3 +2,6 @@ streamlit
 pydicom
 tensorflow
 matplotlib
+numpy
+pillow
+opencv-python-headless
